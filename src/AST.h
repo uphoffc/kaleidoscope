@@ -7,10 +7,10 @@
 #include <vector>
 #include <optional>
 
-#include "Visitor.h"
+#include <md/type.hpp>
 
 // Sort from derived to base classes
-using ASTVisitor = Visitor<class NumberExprAST,
+using ast_type = md::type< class NumberExprAST,
                            class VariableExprAST,
                            class BinaryExprAST,
                            class CallExprAST,
@@ -20,15 +20,13 @@ using ASTVisitor = Visitor<class NumberExprAST,
                            class ExprAST,
                            class PrototypeAST,
                            class FunctionAST>;
-using DefaultASTVisitor = DefaultVisitor<ASTVisitor>;
 
-class ExprAST {
+class ExprAST : public ast_type {
 public:
   virtual ~ExprAST() {}
-  virtual void accept(ASTVisitor& visitor) = 0;
 };
 
-class NumberExprAST : public Visitable<NumberExprAST,ExprAST,ASTVisitor> {
+class NumberExprAST : public md::with_type<NumberExprAST,ExprAST> {
 private:
   double val;
 
@@ -39,7 +37,7 @@ public:
   double getNumber() const { return val; }
 };
 
-class VariableExprAST : public Visitable<VariableExprAST,ExprAST,ASTVisitor> {
+class VariableExprAST : public md::with_type<VariableExprAST,ExprAST> {
 private:
   std::string name;
 
@@ -50,7 +48,7 @@ public:
   std::string const& getName() const { return name; }
 };
 
-class BinaryExprAST : public Visitable<BinaryExprAST,ExprAST,ASTVisitor> {
+class BinaryExprAST : public md::with_type<BinaryExprAST,ExprAST> {
 private:
   char op;
   std::unique_ptr<ExprAST> lhs, rhs;
@@ -64,7 +62,7 @@ public:
   ExprAST& getRHS() { return *rhs; }
 };
 
-class CallExprAST : public Visitable<CallExprAST,ExprAST,ASTVisitor> {
+class CallExprAST : public md::with_type<CallExprAST,ExprAST> {
 private:
   std::string callee;
   std::vector<std::unique_ptr<ExprAST>> args;
@@ -78,7 +76,7 @@ public:
   std::string const& getCallee() const { return callee; }
 };
 
-class IfExprAST : public Visitable<IfExprAST,ExprAST,ASTVisitor> {
+class IfExprAST : public md::with_type<IfExprAST,ExprAST> {
 private:
   std::unique_ptr<ExprAST> Cond, Then, Else;
 
@@ -94,7 +92,7 @@ public:
   ExprAST& getElse() { return *Else; }
 };
 
-class ForExprAST : public Visitable<ForExprAST,ExprAST,ASTVisitor> {
+class ForExprAST : public md::with_type<ForExprAST,ExprAST> {
 private:
   std::string varName;
   std::unique_ptr<ExprAST> Start, End, Step, Body;
@@ -118,7 +116,7 @@ public:
   ExprAST& getBody() { return *Body; }
 };
 
-class VarExprAST : public Visitable<VarExprAST,ExprAST,ASTVisitor> {
+class VarExprAST : public md::with_type<VarExprAST,ExprAST> {
 private:
   std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> varNames;
   std::unique_ptr<ExprAST> body;
@@ -132,7 +130,7 @@ public:
   ExprAST& getBody() { return *body; }
 };
 
-class PrototypeAST {
+class PrototypeAST : public md::with_type<PrototypeAST,ast_type>{
 private:
   std::string name;
   std::vector<std::string> args;
@@ -141,16 +139,12 @@ public:
   PrototypeAST(std::string const& name, std::vector<std::string> args)
     : name(name), args(std::move(args)) {}
 
-  void accept(ASTVisitor& visitor) {
-    visitor.visit(*this);
-  }
-
   std::string const& getName() const { return name; }
 
   auto const& getArgs() const { return args; }
 };
 
-class FunctionAST {
+class FunctionAST : public md::with_type<FunctionAST,ast_type> {
 private:
   std::unique_ptr<PrototypeAST> proto;
   std::unique_ptr<ExprAST> body;
@@ -158,10 +152,6 @@ private:
 public:
   FunctionAST(std::unique_ptr<PrototypeAST> proto, std::unique_ptr<ExprAST> body)
     : proto(std::move(proto)), body(std::move(body)) {}
-
-  void accept(ASTVisitor& visitor) {
-    visitor.visit(*this);
-  }
 
   PrototypeAST& getPrototype() {
     return *proto;

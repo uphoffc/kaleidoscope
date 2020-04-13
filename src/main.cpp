@@ -59,25 +59,23 @@ static void MainLoop(Parser& parser) {
 }
 
 int main() {
-  InitializeNativeTarget();
-  InitializeNativeTargetAsmPrinter();
-  InitializeNativeTargetAsmParser();
+  //InitializeNativeTarget();
+  //InitializeNativeTargetAsmPrinter();
+  //InitializeNativeTargetAsmParser();
 
-  //std::string code("def test(x y z) x+y*5.0-z*z*z * test(x,y,z);");
+  std::string code("def test(x y z) x+y*5.0-z*z*z * test(x,y,z);");
   //std::string code("def test(x) if x < 5 then (1+2+x)*(x+(1+2)) else x+x;");
-  std::string code("def test(n) var x=5,y=6 in x*n+y*n;");
+  //std::string code("def test(n) var x=5,y=6 in x*n+y*n;");
   //std::string code("def text(x y) x + y;");
   std::stringstream codeStream(code);
   Lexer lexer(codeStream);
   Parser parser(lexer);
   parser.getNextToken();
   auto ast = parser.parseDefinition();
-  PrettyPrinter pp;
-  ast->accept(pp);
+  md::visit(PrettyPrinter(), *ast);
 
   CodeGen cg;
-  ast->accept(cg);
-
+  md::visit(cg, *ast);
   for (auto& val : cg.getFunctions()) {
     val->print(llvm::errs());
     std::cerr << std::endl;

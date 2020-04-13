@@ -17,12 +17,12 @@
 #include "llvm/Transforms/Scalar/GVN.h"
 #include "llvm/Transforms/Utils.h"
 
-#include "Visitor.h"
+#include <md/visit.hpp>
 #include "AST.h"
 
 using namespace llvm;
 
-class CodeGen : public DefaultASTVisitor {
+class CodeGen {
 private:
   LLVMContext context;
   IRBuilder<> builder;
@@ -41,7 +41,7 @@ private:
   std::vector<Function*> functions;
 
   Value* visitAndGet(ExprAST& expr) {
-    expr.accept(*this);
+    md::visit(*this, expr);
     Value* v = values.top();
     values.pop();
     return v;
@@ -70,12 +70,14 @@ public:
     return functions;
   }
 
-  void visit(NumberExprAST& node) override {
+  void operator()(ExprAST& node) {}
+
+  void operator()(NumberExprAST& node) {
     Value* v = ConstantFP::get(context, APFloat(node.getNumber()));
     values.push(v);
   }
 
-  void visit(VariableExprAST& node) override {
+  void operator()(VariableExprAST& node) {
     Value* v = namedValues[node.getName()];
     if (!v) {
       logError("Unknown variable name");
@@ -84,7 +86,7 @@ public:
     values.push(v);
   }
 
-  void visit(BinaryExprAST& node) override {
+  void operator()(BinaryExprAST& node) {
     if (node.getOp() == '=') {
       VariableExprAST* lhsE = dynamic_cast<VariableExprAST*>(&node.getLHS());
       if (!lhsE) {
@@ -109,8 +111,8 @@ public:
       return;
     }
 
-    node.getLHS().accept(*this);
-    node.getRHS().accept(*this);
+    md::visit(*this, node.getLHS());
+    md::visit(*this, node.getRHS());
     Value* rhs = values.top();
     values.pop();
     Value* lhs = values.top();
@@ -140,7 +142,7 @@ public:
     }
     values.push(v);
   }
-  void visit(CallExprAST& node) override {
+  void operator()(CallExprAST& node) {
     Value* v = nullptr;
     Function* calleeF = module->getFunction(node.getCallee());
     if (!calleeF) {
@@ -150,7 +152,7 @@ public:
     } else {
       std::vector<Value*> args;
       for (auto& arg : node.getArgs()) {
-        arg->accept(*this);
+        md::visit(*this, *arg);
         Value* result = values.top();
         values.pop();
         if (result) {
@@ -165,7 +167,7 @@ public:
     }
     values.push(v);
   }
-  void visit(IfExprAST& node) override {
+  void operator()(IfExprAST& node) {
     Value* Cond = visitAndGet(node.getCond());
     if (!Cond) {
       values.push(nullptr);
@@ -214,7 +216,7 @@ public:
 
     values.push(phi);
   }
-  void visit(ForExprAST& node) override {
+  void operator()(ForExprAST& node) {
     Function* f = builder.GetInsertBlock()->getParent();
 
     AllocaInst* Alloca = CreateEntryBlockAlloca(f, node.getVarName());
@@ -286,7 +288,7 @@ public:
 
     values.push(Constant::getNullValue(Type::getDoubleTy(context)));
   }
-  void visit(VarExprAST& node) override {
+  void operator()(VarExprAST& node) {
     std::vector<AllocaInst*> OldBindings;
 
     Function* f = builder.GetInsertBlock()->getParent();
@@ -325,7 +327,7 @@ public:
 
     values.push(BodyVal);
   }
-  void visit(PrototypeAST& node) override {
+  void operator()(PrototypeAST& node) {
     auto const& args = node.getArgs();
     std::vector<Type*> doubles(args.size(), Type::getDoubleTy(context));
     FunctionType* ft = FunctionType::get(Type::getDoubleTy(context), doubles, false);
@@ -339,11 +341,11 @@ public:
 
     prototypes.push(f);
   }
-  void visit(FunctionAST& node) override {
+  void operator()(FunctionAST& node) {
     Function* f = module->getFunction(node.getPrototype().getName());
 
     if (!f) {
-      node.getPrototype().accept(*this);
+      md::visit(*this, node.getPrototype());
       f = prototypes.top();
       prototypes.pop();
     }
@@ -359,7 +361,7 @@ public:
         namedValues[arg.getName()] = Alloca;
       }
 
-      node.getBody().accept(*this);
+      md::visit(*this, node.getBody());
       Value* retVal = values.top();
       values.pop();
       if (retVal) {

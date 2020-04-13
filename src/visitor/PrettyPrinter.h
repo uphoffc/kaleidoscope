@@ -4,10 +4,10 @@
 #include <iostream>
 #include <sstream>
 
-#include "Visitor.h"
+#include <md/visit.hpp>
 #include "AST.h"
 
-class PrettyPrinter : public DefaultASTVisitor {
+class PrettyPrinter {
 private:
   int level = 0;
 
@@ -20,65 +20,70 @@ private:
   }
 
 public:
-  void visit(NumberExprAST& node) override {
+  void operator()(ExprAST&) {}
+
+  void operator()(NumberExprAST& node) {
     print(node.getNumber());
   }
-  void visit(VariableExprAST& node) override {
+  void operator()(VariableExprAST& node) {
     print(node.getName());
   }
-  void visit(BinaryExprAST& node) override {
+  void operator()(BinaryExprAST& node) {
     print(node.getOp());
     ++level;
-    node.getLHS().accept(*this);
-    node.getRHS().accept(*this);
+    md::visit(*this, node.getLHS());
+    md::visit(*this, node.getRHS());
     --level;
   }
-  void visit(CallExprAST& node) override {
+  void operator()(CallExprAST& node) {
     print("call " + node.getCallee());
     ++level;
     for (auto& arg : node.getArgs()) {
-      arg->accept(*this);
+      md::visit(*this, *arg);
     }
     --level;
   }
-  void visit(IfExprAST& node) override {
+  void operator()(IfExprAST& node) {
     print("if");
     ++level;
-    node.getCond().accept(*this);
+    md::visit(*this, node.getCond());
     --level;
     print("then");
     ++level;
-    node.getThen().accept(*this);
+    md::visit(*this, node.getThen());
     --level;
     print("else");
     ++level;
-    node.getElse().accept(*this);
+    md::visit(*this, node.getElse());
     --level;
   }
-  void visit(ForExprAST& node) override {
+  void operator()(ForExprAST& node) {
     print("for");
     ++level;
     print("start");
     ++level;
-    node.getStart().accept(*this);
+    md::visit(*this, node.getStart());
     --level;
     print("end");
     ++level;
-    node.getEnd().accept(*this);
+    md::visit(*this, node.getEnd());
     --level;
     if (node.getStep()) {
       print("step");
       ++level;
-      node.getStep()->get().accept(*this);
+      md::visit(*this, node.getStep()->get());
       --level;
     }
     --level;
     print("in");
     ++level;
-    node.getBody().accept(*this);
+    md::visit(*this, node.getBody());
     --level;
   }
-  void visit(PrototypeAST& node) override {
+  void operator()(VarExprAST& node) {
+    //print(node.getName());
+  }
+  void operator()(PrototypeAST& node) {
     std::stringstream ss;
     ss << "def " << node.getName() << " ( ";
     for (auto& child : node.getArgs()) {
@@ -87,10 +92,10 @@ public:
     ss << ")";
     print(ss.str());
   }
-  void visit(FunctionAST& node) override {
-    node.getPrototype().accept(*this);
+  void operator()(FunctionAST& node) {
+    md::visit(*this, node.getPrototype());
     ++level;
-    node.getBody().accept(*this);
+    md::visit(*this, node.getBody());
     --level;
   }
 };
