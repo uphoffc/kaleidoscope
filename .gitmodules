@@ -1,0 +1,3 @@
+[submodule "submodules/multiple-dispatch"]
+	path = submodules/multiple-dispatch
+	url = https://github.com/uphoffc/multiple-dispatch.git
