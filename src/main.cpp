@@ -75,11 +75,8 @@ int main() {
   md::visit(PrettyPrinter(), *ast);
 
   CodeGen cg;
-  md::visit(cg, *ast);
-  for (auto& val : cg.getFunctions()) {
-    val->print(llvm::errs());
-    std::cerr << std::endl;
-  }
+  Value* v = md::visit(cg, *ast);
+  v->print(llvm::errs());
 
   return 0;
 }

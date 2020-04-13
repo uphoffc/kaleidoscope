@@ -30,21 +30,15 @@ private:
   std::unique_ptr<legacy::FunctionPassManager> fpm;
 
   std::unordered_map<std::string, AllocaInst*> namedValues;
-  std::stack<Value*> values;
-  std::stack<Function*> prototypes;
 
   Value* logError(char const* str) {
     std::cerr << "Error: " << str << std::endl;
     return nullptr;
   }
 
-  std::vector<Function*> functions;
-
-  Value* visitAndGet(ExprAST& expr) {
-    md::visit(*this, expr);
-    Value* v = values.top();
-    values.pop();
-    return v;
+  Function* logErrorF(char const* str) {
+    logError(str);
+    return nullptr;
   }
 
   AllocaInst* CreateEntryBlockAlloca(Function* f, std::string const& varName) {
@@ -66,112 +60,89 @@ public:
     fpm->doInitialization();
   }
 
-  auto const& getFunctions() const {
-    return functions;
+  Value* operator()(ExprAST& node) { return nullptr; }
+
+  Value* operator()(NumberExprAST& node) {
+    return ConstantFP::get(context, APFloat(node.getNumber()));
   }
 
-  void operator()(ExprAST& node) {}
-
-  void operator()(NumberExprAST& node) {
-    Value* v = ConstantFP::get(context, APFloat(node.getNumber()));
-    values.push(v);
-  }
-
-  void operator()(VariableExprAST& node) {
+  Value* operator()(VariableExprAST& node) {
     Value* v = namedValues[node.getName()];
     if (!v) {
-      logError("Unknown variable name");
+      return logError("Unknown variable name");
     }
-    v = builder.CreateLoad(v, node.getName());
-    values.push(v);
+    return builder.CreateLoad(v, node.getName());
   }
 
-  void operator()(BinaryExprAST& node) {
+  Value* operator()(BinaryExprAST& node) {
     if (node.getOp() == '=') {
       VariableExprAST* lhsE = dynamic_cast<VariableExprAST*>(&node.getLHS());
       if (!lhsE) {
-        logError("destination of '=' must be a variable");
-        values.push(nullptr);
-        return;
+        return logError("destination of '=' must be a variable");
+        return nullptr;
       }
-      Value* rhs = visitAndGet(node.getRHS());
+      Value* rhs = md::visit(*this, node.getRHS());
       if (!rhs) {
-        values.push(nullptr);
-        return;
+        return nullptr;
       }
       Value* variable = namedValues[lhsE->getName()];
       if (!variable) {
-        logError("Unknown variable name");
-        values.push(nullptr);
-        return;
+        return logError("Unknown variable name");
       }
 
       builder.CreateStore(rhs, variable);
-      values.push(rhs);
-      return;
+      return rhs;
     }
 
-    md::visit(*this, node.getLHS());
-    md::visit(*this, node.getRHS());
-    Value* rhs = values.top();
-    values.pop();
-    Value* lhs = values.top();
-    values.pop();
+    Value* lhs = md::visit(*this, node.getLHS());
+    Value* rhs = md::visit(*this, node.getRHS());
+
+    if (!lhs || !rhs) {
+      return nullptr;
+    }
 
     Value* v = nullptr;
-
-    if (lhs && rhs) {
-      switch (node.getOp()) {
-        case '+':
-          v = builder.CreateFAdd(lhs, rhs, "addtmp");
-          break;
-        case '-':
-          v = builder.CreateFSub(lhs, rhs, "subtmp");
-          break;
-        case '*':
-          v = builder.CreateFMul(lhs, rhs, "multmp");
-          break;
-        case '<':
-          v = builder.CreateFCmpULT(lhs, rhs, "cmptmp");
-          v = builder.CreateUIToFP(v, Type::getDoubleTy(context), "booltmp");
-          break;
-        default:
-          logError("Unknown operator ");
-          break;
-      }
+    switch (node.getOp()) {
+      case '+':
+        v = builder.CreateFAdd(lhs, rhs, "addtmp");
+        break;
+      case '-':
+        v = builder.CreateFSub(lhs, rhs, "subtmp");
+        break;
+      case '*':
+        v = builder.CreateFMul(lhs, rhs, "multmp");
+        break;
+      case '<':
+        v = builder.CreateFCmpULT(lhs, rhs, "cmptmp");
+        v = builder.CreateUIToFP(v, Type::getDoubleTy(context), "booltmp");
+        break;
+      default:
+        v = logError("Unknown operator");
+        break;
     }
-    values.push(v);
+    return v;
   }
-  void operator()(CallExprAST& node) {
-    Value* v = nullptr;
+  Value* operator()(CallExprAST& node) {
     Function* calleeF = module->getFunction(node.getCallee());
     if (!calleeF) {
-      logError("Unknown function referenced");
-    } else if (calleeF->arg_size() != node.getArgs().size()) {
-      logError("Incorrect number of arguments passed");
-    } else {
-      std::vector<Value*> args;
-      for (auto& arg : node.getArgs()) {
-        md::visit(*this, *arg);
-        Value* result = values.top();
-        values.pop();
-        if (result) {
-          args.push_back(values.top());
-        } else {
-          break;
-        }
-      }
-      if (args.size() == calleeF->arg_size()) {
-        v = builder.CreateCall(calleeF, args, "calltmp");
+      return logError("Unknown function referenced");
+    }
+    if (calleeF->arg_size() != node.getArgs().size()) {
+      return logError("Incorrect number of arguments passed");
+    }
+    std::vector<Value*> args;
+    for (auto& arg : node.getArgs()) {
+      args.push_back(md::visit(*this, *arg));
+      if (!args.back()) {
+        return nullptr;
       }
     }
-    values.push(v);
+    return builder.CreateCall(calleeF, args, "calltmp");
   }
-  void operator()(IfExprAST& node) {
-    Value* Cond = visitAndGet(node.getCond());
+  Value* operator()(IfExprAST& node) {
+    Value* Cond = md::visit(*this, node.getCond());
     if (!Cond) {
-      values.push(nullptr);
-      return;
+      return nullptr;
     }
 
     Cond = builder.CreateFCmpONE(Cond, ConstantFP::get(context, APFloat(0.0)), "ifcond");
@@ -186,10 +157,9 @@ public:
 
     builder.SetInsertPoint(ThenBB);
 
-    Value* Then = visitAndGet(node.getThen());
+    Value* Then = md::visit(*this, node.getThen());
     if (!Then) {
-      values.push(nullptr);
-      return;
+      return nullptr;
     }
 
     builder.CreateBr(MergeBB);
@@ -198,10 +168,9 @@ public:
     f->getBasicBlockList().push_back(ElseBB);
     builder.SetInsertPoint(ElseBB);
 
-    Value* Else = visitAndGet(node.getElse());
+    Value* Else = md::visit(*this, node.getElse());
     if (!Else) {
-      values.push(nullptr);
-      return;
+      return nullptr;
     }
 
     builder.CreateBr(MergeBB);
@@ -214,17 +183,16 @@ public:
     phi->addIncoming(Then, ThenBB);
     phi->addIncoming(Else, ElseBB);
 
-    values.push(phi);
+    return phi;
   }
-  void operator()(ForExprAST& node) {
+  Value* operator()(ForExprAST& node) {
     Function* f = builder.GetInsertBlock()->getParent();
 
     AllocaInst* Alloca = CreateEntryBlockAlloca(f, node.getVarName());
 
-    Value* Start = visitAndGet(node.getStart());
+    Value* Start = md::visit(*this, node.getStart());
     if (!Start) {
-      values.push(nullptr);
-      return;
+      return nullptr;
     }
 
     builder.CreateStore(Start, Alloca);
@@ -242,27 +210,24 @@ public:
     AllocaInst* OldVal = namedValues[node.getVarName()];
     namedValues[node.getVarName()] = Alloca;
 
-    Value* Body = visitAndGet(node.getBody());
+    Value* Body = md::visit(*this, node.getBody());
     if (!Body) {
-      values.push(nullptr);
-      return;
+      return nullptr;
     }
 
     Value* Step = nullptr;
     if (node.getStep()) {
-      Step = visitAndGet(node.getStep()->get());
+      Step = md::visit(*this, node.getStep()->get());
       if (!Step) {
-        values.push(nullptr);
-        return;
+        return nullptr;
       }
     } else {
       Step = ConstantFP::get(context, APFloat(1.0));
     }
 
-    Value* End = visitAndGet(node.getEnd());
+    Value* End = md::visit(*this, node.getEnd());
     if (!End) {
-      values.push(nullptr);
-      return;
+      return nullptr;
     }
 
     Value* CurVar = builder.CreateLoad(Alloca);
@@ -286,9 +251,9 @@ public:
       namedValues.erase(node.getVarName());
     }
 
-    values.push(Constant::getNullValue(Type::getDoubleTy(context)));
+    return Constant::getNullValue(Type::getDoubleTy(context));
   }
-  void operator()(VarExprAST& node) {
+  Value* operator()(VarExprAST& node) {
     std::vector<AllocaInst*> OldBindings;
 
     Function* f = builder.GetInsertBlock()->getParent();
@@ -299,10 +264,9 @@ public:
 
       Value* InitVal;
       if (Init) {
-        InitVal = visitAndGet(*Init);
+        InitVal = md::visit(*this, *Init);
         if (!InitVal) {
-          values.push(nullptr);
-          return;
+          return nullptr;
         }
       } else {
         InitVal = ConstantFP::get(context, APFloat(0.0));
@@ -314,10 +278,9 @@ public:
       namedValues[VarName] = Alloca;
     }
 
-    Value* BodyVal = visitAndGet(node.getBody());
+    Value* BodyVal = md::visit(*this, node.getBody());
     if (!BodyVal) {
-      values.push(nullptr);
-      return;
+      return nullptr;
     }
 
     auto it = OldBindings.begin();
@@ -325,9 +288,9 @@ public:
       namedValues[entry.first] = *it++;
     }
 
-    values.push(BodyVal);
+    return BodyVal;
   }
-  void operator()(PrototypeAST& node) {
+  Function* operator()(PrototypeAST& node) {
     auto const& args = node.getArgs();
     std::vector<Type*> doubles(args.size(), Type::getDoubleTy(context));
     FunctionType* ft = FunctionType::get(Type::getDoubleTy(context), doubles, false);
@@ -339,42 +302,40 @@ public:
       arg.setName(*it++);
     }
 
-    prototypes.push(f);
+    return f;
   }
-  void operator()(FunctionAST& node) {
+  Function* operator()(FunctionAST& node) {
     Function* f = module->getFunction(node.getPrototype().getName());
 
     if (!f) {
-      md::visit(*this, node.getPrototype());
-      f = prototypes.top();
-      prototypes.pop();
+      f = static_cast<Function*>(md::visit(*this, node.getPrototype()));
+    }
+    if (!f) {
+      return nullptr;
+    }
+    if (!f->empty()) {
+      return logErrorF("Function cannot be redefined");
+    }
+    BasicBlock* bb = BasicBlock::Create(context, "entry", f);
+    builder.SetInsertPoint(bb);
+
+    namedValues.clear();
+    for (auto& arg : f->args()) {
+      AllocaInst* Alloca = CreateEntryBlockAlloca(f, arg.getName());
+      builder.CreateStore(&arg, Alloca);
+      namedValues[arg.getName()] = Alloca;
     }
 
-    if (f && f->empty()) {
-      BasicBlock* bb = BasicBlock::Create(context, "entry", f);
-      builder.SetInsertPoint(bb);
-
-      namedValues.clear();
-      for (auto& arg : f->args()) {
-        AllocaInst* Alloca = CreateEntryBlockAlloca(f, arg.getName());
-        builder.CreateStore(&arg, Alloca);
-        namedValues[arg.getName()] = Alloca;
-      }
-
-      md::visit(*this, node.getBody());
-      Value* retVal = values.top();
-      values.pop();
-      if (retVal) {
-        builder.CreateRet(retVal);
-        llvm::verifyFunction(*f, &llvm::errs());
-        fpm->run(*f);
-        functions.push_back(f);
-      } else {
-        f->eraseFromParent();
-      }
-    } else {
-      logError("Function cannot be redefined");
+    Value* retVal = md::visit(*this, node.getBody());
+    if (retVal) {
+      builder.CreateRet(retVal);
+      llvm::verifyFunction(*f, &llvm::errs());
+      fpm->run(*f);
+      return f;
     }
+
+    f->eraseFromParent();
+    return f;
   }
 };
 
